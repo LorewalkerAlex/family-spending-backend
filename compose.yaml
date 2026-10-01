@@ -1,0 +1,37 @@
+name: family-spending-backend
+
+services:
+  backend:
+    container_name: family-spending-backend
+    build:
+      context: .
+    image: family-spending-backend:local
+    restart: unless-stopped
+    init: true
+    user: "${PUID:-10001}:${PGID:-10001}"
+    read_only: true
+    environment:
+      TZ: "${TZ:-Asia/Shanghai}"
+      FAMILY_SPENDING_ENVIRONMENT: production
+      FAMILY_SPENDING_DATA_ROOT: /app/data
+      FAMILY_SPENDING_BIND_HOST: 0.0.0.0
+      FAMILY_SPENDING_BIND_PORT: "8000"
+      FAMILY_SPENDING_PARSER_VERSION: cmb-v1
+      FAMILY_SPENDING_SCHEDULER_ENABLED: "${FAMILY_SPENDING_SCHEDULER_ENABLED:-true}"
+      FAMILY_SPENDING_CMB_EMAIL_POLL_ENABLED: "${FAMILY_SPENDING_CMB_EMAIL_POLL_ENABLED:-false}"
+      FAMILY_SPENDING_EMAIL_POLL_INTERVAL_SECONDS: "${FAMILY_SPENDING_EMAIL_POLL_INTERVAL_SECONDS:-300}"
+      FAMILY_SPENDING_IMAP_ADDRESS: "${FAMILY_SPENDING_IMAP_ADDRESS:-}"
+      FAMILY_SPENDING_IMAP_AUTH_CODE: "${FAMILY_SPENDING_IMAP_AUTH_CODE:-}"
+    ports:
+      - "${FAMILY_SPENDING_BIND_ADDRESS:-127.0.0.1}:${FAMILY_SPENDING_HTTP_PORT:-8000}:8000"
+    volumes:
+      - type: bind
+        source: ./data
+        target: /app/data
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s

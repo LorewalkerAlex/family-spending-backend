@@ -110,12 +110,14 @@ data/
 
 ```text
 HouseholdReadModel
-├── transactions
-├── enrichments
-├── review indexes
-├── spending projection
-├── financial projection
-└── operational status
+├── finance
+│   ├── transactions / enrichments
+│   ├── query indexes
+│   └── spending / financial projections
+├── automation
+│   ├── scheduled rules
+│   └── execution state
+└── feedback
 ```
 
 查询直接读取 Read Model。命令先持久化相关事实或决策，再增量更新受影响的内存状态，然后返回成功。
@@ -129,6 +131,7 @@ HouseholdReadModel
 ```text
 NO_CHANGE
 FEEDBACK_ONLY
+AUTOMATION_ONLY
 PROJECTIONS
 ENRICHMENTS_AND_PROJECTIONS
 TRANSACTIONS_AND_DOWNSTREAM
@@ -140,6 +143,7 @@ FULL_REBUILD
 | Command | Impact |
 | --- | --- |
 | 创建或处理 Feedback | `FEEDBACK_ONLY` |
+| 修改 Scheduled Rule 且没有到期记录 | `AUTOMATION_ONLY` |
 | 无到期记录的 Scheduler tick | `NO_CHANGE` |
 | 修改 Mapping | `ENRICHMENTS_AND_PROJECTIONS` |
 | 修改单笔 Enrichment | `ENRICHMENTS_AND_PROJECTIONS` |
@@ -182,6 +186,7 @@ src/family_spending_backend/
 │   └── filesystem/
 ├── read_model/
 ├── runtime/
+├── bootstrap/
 ├── interfaces/
 │   ├── http/
 │   └── cli/
@@ -210,6 +215,7 @@ Backend 应从一开始提供版本化 API：
 /api/v1/transactions
 /api/v1/analytics/*
 /api/v1/mapping-reviews
+/api/v1/mapping-reviews/recommend
 /api/v1/manual-inputs
 /api/v1/scheduled-inputs
 /api/v1/feedback
@@ -224,6 +230,12 @@ API 要求：
 - Web 与 Android 从同一 contract 生成或校验 API Client。
 - API 不暴露本地文件路径和存储格式。
 - 不为了旧前端永久保留无版本 compatibility endpoint。
+
+### 9.1 Mapping Recommendation
+
+`GET /api/v1/mapping-reviews` 会为每个待处理 description 附带 `recommendation`，客户端可直接把建议的 Merchant 和 Category 预填到人工审核表单。`POST /api/v1/mapping-reviews/recommend` 接受单个当前未分类 expense description，返回相同的只读建议。
+
+Recommendation 是从当前已审核 Mapping 派生的可丢弃状态，不是 Mapping 或 Enrichment Decision。读取推荐不会写文件、不会发布新 generation，也不会自动应用结果；客户端仍须调用 preview/apply 完成人工确认。`rank_score` 是排序分而不是概率，`score_margin` 表示第一名与第二名的差距，`confidence` 同时受两者约束。算法版本通过 `model_version` 返回。
 
 ## 10. 认证扩展口
 
@@ -339,3 +351,153 @@ identity / count / projection parity verification
 - `data/` 可以备份、恢复并通过完整性检查。
 - Docker 中只运行一个有权写入生产数据的 Backend 实例。
 
+## 16. 当前实现状态
+
+第一阶段 Backend 已按本文边界落地：
+
+- 稳定的 SourceRecord、Transaction、SourceLink、Mapping、Enrichment、Feedback 和 Scheduled Input 领域模型；
+- fail-closed `manifest.json`、严格 JSON/YAML/JSONL store、原子单文件替换和跨文件失败回滚；
+- 不可变、内容寻址的 CMB EML Evidence，以及以 `evidence_sha256 + parser_version` 为键的进程内解析缓存；
+- 可完整重建的不可变 `HouseholdReadModel`，按 finance、automation 和 feedback 子树组织；
+- single-writer Mutation Coordinator、类型化 `ReadModelChange`、集中 `ReadModelProjector`、原子 publication 和结构化 mutation timing 日志；
+- 类型化 `ApplicationContainer` 和集中 lifecycle；FastAPI 路由通过 dependency 获取容器，不直接定位动态 `app.state` 服务；
+- Manual Input、单笔 Enrichment、Mapping Review、Feedback、Scheduled Input 和 Source Sync 应用用例；
+- Mapping Review 的非权威 Merchant/Category 预填推荐、结构化备选、解释信号、分数/分差置信度和只读推荐接口；
+- `/api/v1` 统一成功/错误结构、request ID、分页/过滤/排序、OpenAPI contract 和 `AUTH_MODE=disabled` 认证边界；
+- 同进程 Scheduler 与可选 163 IMAP Source Supervisor；IMAP 使用只读 mailbox 和 `BODY.PEEK`；
+- 只读源 importer、完整 identity/state/projection parity verifier、integrity checker、校验和 ZIP backup 和 staged restore；
+- 单 worker Docker image、只读容器根文件系统、持久数据卷、健康检查和 data-root OS advisory lock。
+
+查询只消费当前 Read Model；普通 command 不重新解析全部 EML。Feedback 和纯 Schedule 配置修改只替换各自子树，无变化的 Scheduler tick 不发布 generation。财务命令只携带 finance state，不再搬运无关 Feedback/Schedule 状态。所有生产写用例均通过统一 coordinator 和 `FileUnitOfWork`，后台 CMB 获取也把新 Evidence、identity 和 enrichment 放在同一回滚边界中。
+
+推荐算法的评估口径、限制和当前基线见 [`docs/recommendation-evaluation.md`](./docs/recommendation-evaluation.md)，关键架构决策见 [`docs/adr/`](./docs/adr/)；推荐质量数字是回归证据，不是对未知商户准确率的承诺。
+
+领域术语由根目录 [`CONTEXT.md`](./CONTEXT.md) 维护。第一阶段非目标仍以第 13 节为准；当前没有 UI、登录系统、数据库、多实例或独立 Worker。
+
+## 17. 本地开发与验收
+
+要求 CPython 3.14 或更高版本。Python 版本由 `.python-version` 声明，完整依赖图由 `uv.lock` 固定。首次准备环境或锁文件更新后执行：
+
+```powershell
+uv sync --frozen
+```
+
+正式验收命令：
+
+```powershell
+uv lock --check
+uv run --frozen ruff check .
+uv run --frozen ruff format --check .
+uv run --frozen pytest
+uv pip check
+uv build
+```
+
+修改 `pyproject.toml` 中的依赖时使用 `uv lock` 更新锁文件，再执行 `uv sync --frozen`；不要用 `pip install` 绕过项目锁文件。
+
+pytest 会把 `DeprecationWarning` 和 `PendingDeprecationWarning` 当作错误；HTTP 测试直接使用 ASGI transport，不依赖已弃用的 Starlette TestClient 行为。
+
+本地启动：
+
+```powershell
+uv run --frozen family-spending-api
+```
+
+默认监听 `127.0.0.1:8000`。首次启动只会初始化空目录；非空但缺少 `manifest.json` 的目录会被拒绝。一个 data root 同时只能由一个 Backend 进程持有。
+
+主要配置项：
+
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `FAMILY_SPENDING_ENVIRONMENT` | `development` | 运行环境：`development`、`test` 或 `production` |
+| `FAMILY_SPENDING_DATA_ROOT` | `data` | 本进程拥有的文件数据根目录 |
+| `AUTH_MODE` / `FAMILY_SPENDING_AUTH_MODE` | `disabled` | 当前只接受 `disabled` |
+| `FAMILY_SPENDING_SCHEMA_VERSION` | `1` | 当前文件 schema 版本 |
+| `FAMILY_SPENDING_PARSER_VERSION` | `cmb-v1` | CMB Evidence parser cache 版本 |
+| `FAMILY_SPENDING_SCHEDULER_ENABLED` | `true` | 是否启用启动 tick 和周期 Scheduler |
+| `FAMILY_SPENDING_SCHEDULER_INTERVAL_SECONDS` | `300` | Scheduler 周期秒数 |
+| `FAMILY_SPENDING_CMB_EMAIL_POLL_ENABLED` | `false` | 是否启用 163 IMAP 获取 |
+| `FAMILY_SPENDING_EMAIL_POLL_INTERVAL_SECONDS` | `300` | IMAP poll 周期秒数 |
+| `FAMILY_SPENDING_IMAP_ADDRESS` | 无 | 启用 polling 时必填的邮箱地址 |
+| `FAMILY_SPENDING_IMAP_AUTH_CODE` | 无 | 启用 polling 时必填的授权码；不得写入仓库或日志 |
+| `FAMILY_SPENDING_IMAP_HOST` | `imap.163.com` | IMAP host |
+| `FAMILY_SPENDING_IMAP_PORT` | `993` | IMAP TLS port |
+| `FAMILY_SPENDING_IMAP_MAILBOX` | `INBOX` | 只读搜索的 mailbox |
+| `FAMILY_SPENDING_IMAP_SUBJECT_KEYWORD` | `招商银行信用卡电子账单` | 账单主题过滤词 |
+| `FAMILY_SPENDING_IMAP_SINCE` | `01-Jan-2020` | IMAP `SENTSINCE` 起点，格式 `DD-Mon-YYYY` |
+| `FAMILY_SPENDING_IMAP_TIMEOUT_SECONDS` | `30` | IMAP 连接超时秒数 |
+| `FAMILY_SPENDING_BIND_HOST` | `127.0.0.1` | HTTP bind host |
+| `FAMILY_SPENDING_BIND_PORT` | `8000` | HTTP bind port |
+
+## 18. 导入、校验、备份与恢复
+
+这些命令是离线运维入口。操作当前 Backend 数据前应先停止 Backend；不要把旧生产 `data/` 本身作为 importer source，先复制它：
+
+```powershell
+Copy-Item -LiteralPath F:\OtherProjects\family-spending-insights\data `
+  -Destination .\legacy-data-copy -Recurse
+
+uv run --frozen family-spending-admin import `
+  --source .\legacy-data-copy `
+  --target .\data `
+  --parser-version cmb-v1
+
+uv run --frozen family-spending-admin parity `
+  --left .\legacy-data-copy `
+  --right .\data `
+  --parser-version cmb-v1
+
+uv run --frozen family-spending-admin integrity-check `
+  --data-root .\data `
+  --parser-version cmb-v1
+```
+
+Importer 永不写 source，且拒绝把 target 放在 source 内。Target 必须不存在或为空；数据先在 sibling staging 目录完成严格读取、完整 rebuild 和 parity，再原子发布。
+
+备份与恢复：
+
+```powershell
+uv run --frozen family-spending-admin backup `
+  --data-root .\data `
+  --output .\backups\family-spending.zip `
+  --parser-version cmb-v1
+
+uv run --frozen family-spending-admin restore `
+  --archive .\backups\family-spending.zip `
+  --target .\restored-data `
+  --parser-version cmb-v1
+```
+
+Backup 包含 durable truth 和逐文件 SHA-256，不包含 `derived/` 或 `.backend.lock`。Restore 会拒绝重复路径、路径穿越、文件清单或 checksum 不一致，并在 staging 完整 rebuild 通过后才发布到空 target。
+
+## 19. Docker 运行
+
+Compose 延续旧项目已经验证的部署方式，使用宿主机 `./data` bind mount 保存权威数据。首次部署先复制配置模板，并确保 `PUID`/`PGID` 与服务器上 `./data` 的所有者一致；邮箱授权码只写入未提交的 `.env`。
+
+```powershell
+Copy-Item .env.example .env
+docker compose up -d --build
+docker compose ps
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/health
+```
+
+Compose 只定义一个固定名称的 Backend service；容器以非 root 用户、单 Uvicorn worker、只读 root filesystem 运行，只有映射到 `/app/data` 的宿主机 `./data` 和 `/tmp` tmpfs 可写。API 端口默认只绑定 `127.0.0.1`，由独立 Caddy gateway 提供 HTTPS。不要对该 service 做 scale，也不要让临时容器同时挂载并修改 `./data`。更新使用 `docker compose up -d --build`，停止服务使用 `docker compose down`；Compose 不拥有或删除宿主机数据目录。
+
+服务器准备、数据传输、Caddy 边界、更新和一致性备份步骤见 [`deploy/README.md`](./deploy/README.md)。
+
+## 20. 第一阶段验收记录
+
+2026-10-01 使用旧项目真实 `data/` 的只读副本完成了以下链路；验收临时数据和构建产物均在验收后删除，正式迁移前备份保存在仓库外：
+
+- 旧生产目录 20 个文件在验收前后逐文件 SHA-256 一致；
+- 12 封 CMB EML 重建为 1,152 个 SourceRecord 和 1,152 个 Transaction；
+- 396 个 description mapping identity 一致；
+- importer、integrity、backup、restore 和 restore 后 parity 全部通过；
+- Spending `total_spending_minor = 12032726`；
+- Financial `net_cash_flow_minor = 2687949`；
+- 旧实现与新实现的完整 canonical state、Spending payload 和 Financial payload 逐字段相等，规范化结果 SHA-256 为 `9ffe93079637de4b4bbf59835f0f505065d754667a92fab60a60987195e41415`。
+- 最终代码再次完成 import、integrity、backup、restore 和 restore 后 parity，结果仍为上述 1,152/396/金额基线。
+- 无缓存 Ruff、format check、完整 pytest、弃用警告门禁和依赖检查全部通过；sdist 与 wheel 构建成功。
+- 真实 Uvicorn 进程的 Health、Runtime status 和 OpenAPI smoke test 通过；第二个进程被同一 data-root advisory lock 拒绝。
+
+Dockerfile/Compose 契约由自动化测试覆盖。执行实际 image build 仍需要本机或 CI 提供 Docker Engine。

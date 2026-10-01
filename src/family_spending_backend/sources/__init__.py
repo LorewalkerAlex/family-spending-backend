@@ -1,0 +1,1 @@
+"""External evidence source adapters."""
