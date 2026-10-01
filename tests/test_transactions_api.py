@@ -123,11 +123,17 @@ async def test_transaction_list_supports_filter_sort_and_pagination_metadata(
             json={**expense(), "transaction_date": transaction_date, "amount": amount},
         )
         assert response.status_code == 201
+    response = await client.post(
+        "/api/v1/manual-inputs",
+        json={**expense(), "description": "Different merchant"},
+    )
+    assert response.status_code == 201
 
     response = await client.get(
         "/api/v1/transactions",
         params={
             "transaction_type": "expense",
+            "description": expense()["description"],
             "is_unclassified": "true",
             "sort": "date_asc",
             "offset": 1,

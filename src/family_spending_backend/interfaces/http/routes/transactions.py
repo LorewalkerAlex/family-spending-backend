@@ -75,6 +75,7 @@ def list_transactions(
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     transaction_type: Literal["income", "expense"] | None = None,
+    description: str | None = None,
     category: str | None = None,
     is_unclassified: bool | None = None,
     sort: Literal["date_desc", "date_asc", "amount_desc", "amount_asc"] = "date_desc",
@@ -82,6 +83,8 @@ def list_transactions(
     items = _transaction_views(container.runtime_state.read_model())
     if transaction_type is not None:
         items = [item for item in items if item.transaction.transaction_type == transaction_type]
+    if description is not None:
+        items = [item for item in items if item.description == description]
     if category is not None:
         items = [item for item in items if item.enrichment.category == category]
     if is_unclassified is not None:
