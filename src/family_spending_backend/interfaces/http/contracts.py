@@ -75,6 +75,94 @@ class RuntimeStatusData(BaseModel):
     parser_version: str
 
 
+class SpendingAggregateData(BaseModel):
+    total_spending_minor: int
+    transaction_count: int
+    month_count: int
+
+
+class SpendingSummaryData(BaseModel):
+    all_data: SpendingAggregateData
+    shown_data: SpendingAggregateData
+
+
+class SpendingCategoryData(BaseModel):
+    category: str
+    spending_minor: int
+    transaction_count: int
+
+
+class SpendingMerchantData(BaseModel):
+    merchant_name: str | None
+    display_name: str
+    is_unclassified: bool
+    spending_minor: int
+    transaction_count: int
+
+
+class SpendingMonthData(BaseModel):
+    month: str
+    is_complete: bool
+    show: bool
+    total_spending_minor: int
+    transaction_count: int
+    categories: list[SpendingCategoryData]
+    merchants: list[SpendingMerchantData]
+
+
+class SpendingReconciliationData(BaseModel):
+    zero_amount_transactions: int
+    refund_transactions: int
+    same_merchant_refund_matches: int
+    same_merchant_matched_amount_minor: int
+    net_consumption_transactions: int
+    fully_refunded_transactions: int
+    partially_refunded_transactions: int
+    unmatched_refund_count: int
+    unmatched_refund_amount_minor: int
+    unclassified_net_transactions: int
+
+
+class SpendingAnalyticsData(BaseModel):
+    schema_version: Literal[2]
+    currency: str | None
+    summary: SpendingSummaryData
+    months: list[SpendingMonthData]
+    reconciliation: SpendingReconciliationData
+
+
+class FinancialAggregateData(BaseModel):
+    total_income_minor: int
+    total_spending_minor: int
+    net_cash_flow_minor: int
+    income_transaction_count: int
+    spending_transaction_count: int
+    month_count: int
+
+
+class FinancialSummaryData(BaseModel):
+    all_data: FinancialAggregateData
+    shown_data: FinancialAggregateData
+
+
+class FinancialMonthData(BaseModel):
+    month: str
+    spending_data_complete: bool
+    show: bool
+    total_income_minor: int
+    income_transaction_count: int
+    total_spending_minor: int
+    spending_transaction_count: int
+    net_cash_flow_minor: int
+
+
+class FinancialAnalyticsData(BaseModel):
+    schema_version: Literal[1]
+    currency: str | None
+    summary: FinancialSummaryData
+    months: list[FinancialMonthData]
+
+
 class ManualInputWriteRequest(BaseModel):
     transaction_type: Literal["income", "expense"]
     transaction_date: date

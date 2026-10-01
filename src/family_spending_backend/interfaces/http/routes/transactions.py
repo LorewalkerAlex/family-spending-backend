@@ -76,6 +76,7 @@ def list_transactions(
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     transaction_type: Literal["income", "expense"] | None = None,
     description: str | None = None,
+    month: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}$")] = None,
     category: str | None = None,
     is_unclassified: bool | None = None,
     sort: Literal["date_desc", "date_asc", "amount_desc", "amount_asc"] = "date_desc",
@@ -85,6 +86,10 @@ def list_transactions(
         items = [item for item in items if item.transaction.transaction_type == transaction_type]
     if description is not None:
         items = [item for item in items if item.description == description]
+    if month is not None:
+        items = [
+            item for item in items if item.transaction.transaction_date.strftime("%Y-%m") == month
+        ]
     if category is not None:
         items = [item for item in items if item.enrichment.category == category]
     if is_unclassified is not None:

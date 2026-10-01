@@ -125,7 +125,11 @@ async def test_transaction_list_supports_filter_sort_and_pagination_metadata(
         assert response.status_code == 201
     response = await client.post(
         "/api/v1/manual-inputs",
-        json={**expense(), "description": "Different merchant"},
+        json={
+            **expense(),
+            "transaction_date": "2026-08-31",
+            "description": "Different merchant",
+        },
     )
     assert response.status_code == 201
 
@@ -134,6 +138,7 @@ async def test_transaction_list_supports_filter_sort_and_pagination_metadata(
         params={
             "transaction_type": "expense",
             "description": expense()["description"],
+            "month": "2026-09",
             "is_unclassified": "true",
             "sort": "date_asc",
             "offset": 1,
